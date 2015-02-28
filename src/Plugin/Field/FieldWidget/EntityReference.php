@@ -29,7 +29,7 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
  *   description = @Translation("Uses entity browser to select entities."),
  *   multiple_values = TRUE,
  *   field_types = {
- *     "entity_reference"
+ *     "entity_reference", "file"
  *   }
  * )
  */
@@ -211,7 +211,15 @@ class EntityReference extends WidgetBase implements ContainerFactoryPluginInterf
     $ids = [];
     if ($form_state->isRebuilding()) {
       if ($value = $form_state->getValue([$this->fieldDefinition->getName(), 'target_id'])) {
+
         $ids = explode(' ', $value);
+        $ids = array_combine($ids, $ids);
+        foreach ($items as $item) {
+          unset($ids[$item->target_id]);
+        }
+        foreach ($ids as $id) {
+          $items[] = $id;
+        }
       }
     }
     else {
@@ -222,7 +230,9 @@ class EntityReference extends WidgetBase implements ContainerFactoryPluginInterf
     $ids = array_filter($ids);
 
     $hidden_id = Html::getUniqueId('edit-' . $this->fieldDefinition->getName() . '-target-id');
+    $table_id = Html::getUniqueId('edit-' . $this->fieldDefinition->getName() . '-table');
     $details_id = Html::getUniqueId('edit-' . $this->fieldDefinition->getName());
+    $weight_class = Html::cleanCssIdentifier($this->fieldDefinition->getName() . '-weight');
 
     $element += [
       '#id' => $details_id,
@@ -245,27 +255,87 @@ class EntityReference extends WidgetBase implements ContainerFactoryPluginInterf
       'entity_browser' => $this->entityManager->getStorage('entity_browser')->load($this->getSetting('entity_browser'))->getDisplay()->displayEntityBrowser(),
       '#attached' => ['library' => ['entity_browser/entity_reference']],
       'current' => [
-        '#theme' => 'item_list',
-        '#items' => array_map(
-          function($id) use ($entity_storage, $field_widget_display) {
-            $entity = $entity_storage->load($id);
-            $display = $field_widget_display->view($entity);
-
-            if (is_string($display)) {
-              $display = [
-                '#markup' => $display
-              ];
-            }
-
-            $display['#wrapper_attributes']['data-entity-id'] = $entity->id();
-            return $display;
-          },
-          $ids
-        ),
+        '#type' => 'table',
+        '#header' => [
+          t('File'),
+          t('Weight'),
+          t('Description'),
+          t('Operations'),
+        ],
         '#attached' => ['library' => ['core/jquery.ui.sortable']],
-        '#attributes' => ['class' => ['entities-list']],
-      ],
+        '#attributes' => [
+          'class' => ['entities-list'],
+          'id' => $table_id,
+        ],
+        '#tabledrag' => array(
+          array(
+            'action' => 'order',
+            'relationship' => 'sibling',
+            'group' => $weight_class,
+          ),
+        ),
+      ]
     ];
+
+    $delta = 0;
+    foreach ($items as $item) {
+      $entity = $item->entity;
+
+      $operations = array();
+      if ($entity->access('update') && $entity->hasLinkTemplate('edit-form')) {
+        $operations['edit'] = array(
+          'title' => $this->t('Edit'),
+          'weight' => 10,
+          'url' => $entity->urlInfo('edit-form'),
+          'attributes' => array(
+            'class' => ['use-ajax'],
+            'data-accepts' => 'application/vnd.drupal-modal',
+            'data-dialog-options' => '{"width":800}',
+          )
+        );
+      }
+      $operations['delete'] = array(
+        'title' => $this->t('Delete'),
+        'weight' => 100,
+        'url' => $entity->urlInfo('delete-form'),
+      );
+
+      $element['current'][$delta] = [
+        '#attributes' => ['class' => ['draggable']],
+        'file' => [
+          'display' => $item->view('teaser'),
+          'target_id' => [
+            '#type' => 'value',
+            '#value' => $entity->id(),
+          ]
+        ],
+        '_ŵeight' => array(
+          '#type' => 'weight',
+          '#title' => t('Weight for row @number', array('@number' => $delta + 1)),
+          '#title_display' => 'invisible',
+          // Note: this 'delta' is the FAPI #type 'weight' element's property.
+          //'#delta' => $max,
+          '#default_value' => $delta,
+          '#weight' => 100,
+          '#attributes' => ['class' => [$weight_class]],
+        ),
+        'description' => array(
+          '#type' => 'textfield',
+          '#title' => t('Description'),
+          '#title_display' => 'invisible',
+          '#default_value' => $item->description,
+          '#description' => t('The description may be used as the label of the link to the file.'),
+        ),
+        'operations' => [
+          '#type' => 'operations',
+          '#links' => $operations,
+        ]
+
+      ];
+
+      $delta++;
+    }
+
 
     return $element;
   }
